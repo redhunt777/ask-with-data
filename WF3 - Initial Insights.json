@@ -8,51 +8,38 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "webhook-insights",
-      "name": "Webhook: /insights",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 300]
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "id": "wf3-webhook",
+      "name": "insights",
+      "webhookId": "insights-webhook-id"
     },
     {
       "parameters": {
-        "jsCode": "// Fan out table names as separate items for parallel MCP calls\nconst tables = $input.item.json.body.tables;\nreturn tables.map(name => ({ json: { table_name: name } }));"
+        "jsCode": "// Fan out table names as separate items\n// Streamlit sends: { tables: ['sales', 'products'] }\nconst body = $input.first().json.body;\nconst tables = body.tables;\n\nif (!tables || !Array.isArray(tables) || tables.length === 0) {\n  throw new Error('No tables provided. Send: { tables: [\"table1\", \"table2\"] }');\n}\n\nreturn tables.map(name => ({ json: { table_name: name } }));",
+        "mode": "runOnceForAllItems"
       },
-      "id": "code-split-tables",
-      "name": "Code: Split Tables",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [240, 0],
+      "id": "wf3-split-tables",
+      "name": "Split Tables"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.MCP_BASE_URL }}/mcp",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
+        "url": "http://host.docker.internal:8000/tools/generate_initial_insights",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "jsonrpc", "value": "2.0" },
-            { "name": "method", "value": "tools/call" },
-            {
-              "name": "params",
-              "value": "={{ JSON.stringify({ name: 'generate_initial_insights', arguments: { table_name: $json.table_name } }) }}"
-            },
-            { "name": "id", "value": "1" }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"table_name\": \"{{ $json.table_name }}\"\n}",
         "options": {}
       },
-      "id": "mcp-insights",
-      "name": "MCP: generate_initial_insights",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [720, 300]
+      "typeVersion": 4.5,
+      "position": [480, 0],
+      "id": "wf3-mcp-insights",
+      "name": "MCP: generate_initial_insights"
     },
     {
       "parameters": {
@@ -60,85 +47,77 @@
         "destinationFieldName": "all_stats",
         "options": {}
       },
-      "id": "aggregate-stats",
-      "name": "Aggregate: All Table Stats",
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [960, 300]
+      "position": [720, 0],
+      "id": "wf3-aggregate",
+      "name": "Aggregate Stats"
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.GROQ_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            {
-              "name": "messages",
-              "value": "={{ JSON.stringify([\n  {\n    role: 'system',\n    content: `You are a data analyst. Analyze dataset statistics and return ONLY a JSON object.\nNo markdown, no backticks, no preamble. Just the raw JSON.\n\nRequired JSON structure:\n{\n  \"summary_text\": \"2-3 sentences. Focus on what matters. Skip obvious facts.\",\n  \"key_metrics\": [\n    {\"label\": \"string\", \"value\": \"string\", \"table\": \"string\"}\n  ],\n  \"anomalies\": [\"string describing any anomalies or data quality issues\"],\n  \"chart_data\": [\n    {\n      \"chart_type\": \"bar|line\",\n      \"title\": \"string\",\n      \"table\": \"string\",\n      \"x_labels\": [\"string\"],\n      \"y_values\": [number]\n    }\n  ]\n}\n\nFor chart_data: pick the 1-2 most meaningful numeric columns. Use top_frequencies for bar charts, numeric stats for line charts if date ranges exist.`\n  },\n  {\n    role: 'user',\n    content: `Dataset statistics:\\n${JSON.stringify($('Aggregate: All Table Stats').item.json.all_stats, null, 2)}`\n  }\n]) }}"
-            },
-            { "name": "max_tokens", "value": 2048 },
-            { "name": "temperature", "value": 0.3 }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    model: \"llama-3.3-70b-versatile\",\n    temperature: 0.3,\n    max_tokens: 2048,\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are a data analyst. Analyze dataset statistics and return ONLY a raw JSON object. No markdown, no backticks, no preamble. Just the JSON.\\n\\nRequired structure:\\n{\\n  \\\"summary_text\\\": \\\"2-3 sentences. Focus on what matters. Skip obvious facts.\\\",\\n  \\\"key_metrics\\\": [{\\\"label\\\": string, \\\"value\\\": string, \\\"table\\\": string}],\\n  \\\"anomalies\\\": [string],\\n  \\\"chart_data\\\": [{\\\"chart_type\\\": \\\"bar|line\\\", \\\"title\\\": string, \\\"table\\\": string, \\\"x_labels\\\": [string], \\\"y_values\\\": [number]}]\\n}\\n\\nFor chart_data: pick the 1-2 most meaningful numeric columns. Use top_frequencies for bar charts.\"\n      },\n      {\n        role: \"user\",\n        content: \"Dataset statistics:\\n\" + JSON.stringify($json.all_stats)\n      }\n    ]\n  })\n}}",
         "options": {}
       },
-      "id": "groq-narrate",
-      "name": "Groq: Narrate Insights",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1200, 300]
+      "typeVersion": 4.5,
+      "position": [960, 0],
+      "id": "wf3-groq-narrate",
+      "name": "Groq: Narrate Insights",
+      "credentials": {
+        "groqApi": {
+          "id": "your_api_key_id",
+          "name": "Groq account 1"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Parse Groq JSON response safely\nconst raw = $input.item.json.choices[0].message.content.trim();\n\nlet parsed;\ntry {\n  // Strip any accidental markdown fences\n  const cleaned = raw.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Return structured error so Streamlit can handle gracefully\n  return [{\n    json: {\n      success: false,\n      error: 'Groq returned invalid JSON',\n      raw_response: raw\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    ...parsed,\n    raw_stats: $('Aggregate: All Table Stats').item.json.all_stats\n  }\n}];"
+        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nlet parsed;\ntry {\n  const cleaned = raw\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Groq didn't return clean JSON — wrap it\n  return [{\n    json: {\n      success: false,\n      error: 'Groq returned invalid JSON',\n      raw_response: raw,\n      summary_text: raw,\n      key_metrics: [],\n      anomalies: [],\n      chart_data: []\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    summary_text:  parsed.summary_text  || '',\n    key_metrics:   parsed.key_metrics   || [],\n    anomalies:     parsed.anomalies     || [],\n    chart_data:    parsed.chart_data    || [],\n    raw_stats:     $('Aggregate Stats').item.json.all_stats\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
-      "id": "code-parse-insights",
-      "name": "Code: Parse Insights JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1440, 300]
+      "position": [1200, 0],
+      "id": "wf3-parse-insights",
+      "name": "Parse Insights JSON"
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}"
+        "options": {}
       },
-      "id": "respond-insights",
-      "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [1680, 300]
+      "typeVersion": 1.5,
+      "position": [1440, 0],
+      "id": "wf3-respond",
+      "name": "Respond to Webhook"
     }
   ],
   "connections": {
-    "Webhook: /insights": {
-      "main": [[{ "node": "Code: Split Tables", "type": "main", "index": 0 }]]
+    "insights": {
+      "main": [[{ "node": "Split Tables", "type": "main", "index": 0 }]]
     },
-    "Code: Split Tables": {
+    "Split Tables": {
       "main": [[{ "node": "MCP: generate_initial_insights", "type": "main", "index": 0 }]]
     },
     "MCP: generate_initial_insights": {
-      "main": [[{ "node": "Aggregate: All Table Stats", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Aggregate Stats", "type": "main", "index": 0 }]]
     },
-    "Aggregate: All Table Stats": {
+    "Aggregate Stats": {
       "main": [[{ "node": "Groq: Narrate Insights", "type": "main", "index": 0 }]]
     },
     "Groq: Narrate Insights": {
-      "main": [[{ "node": "Code: Parse Insights JSON", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Parse Insights JSON", "type": "main", "index": 0 }]]
     },
-    "Code: Parse Insights JSON": {
+    "Parse Insights JSON": {
       "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   },
   "settings": { "executionOrder": "v1" },
-  "_comment": "Streamlit POSTs {tables: ['table1','table2']} after cleaning confirmed. Stats fetched per table in parallel, Groq narrates, structured JSON returned."
+  "active": false
 }
