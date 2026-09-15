@@ -1,0 +1,4 @@
+.env
+venv
+analytics.duckdb
+demo.csv

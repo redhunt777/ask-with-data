@@ -1,0 +1,15 @@
+# MCP SDK (official, v2)
+mcp>=2.2.0
+
+# Web framework
+fastapi>=0.111.0
+uvicorn>=0.29.0
+
+# Database
+duckdb>=0.10.0
+
+# Data
+pandas>=2.2.0
+
+# Env vars
+python-dotenv>=1.0.0
