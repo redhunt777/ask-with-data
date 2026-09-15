@@ -8,255 +8,242 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "webhook-chat",
-      "name": "Webhook: /chat",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 400]
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "id": "wf4-webhook",
+      "name": "chat",
+      "webhookId": "chat-webhook-id"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/tools/get_schema_overview",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [240, -120],
+      "id": "wf4-schema",
+      "name": "MCP: get_schema_overview"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT role, content FROM messages WHERE session_id = '{{ $json.body.session_id }}' ORDER BY created_at DESC LIMIT 10",
+        "query": "=SELECT role, content FROM messages WHERE session_id = '{{ $('chat').item.json.body.session_id }}' ORDER BY created_at DESC LIMIT 10",
         "options": {}
       },
-      "id": "supabase-fetch-history",
-      "name": "Supabase: Fetch History",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [480, 300],
-      "_note": "Configure Postgres credential with your Supabase connection string"
+      "typeVersion": 2.5,
+      "position": [240, 120],
+      "id": "wf4-fetch-history",
+      "name": "Supabase: Fetch History",
+      "credentials": {
+        "postgres": {
+          "id": "your_supabase_credential_id",
+          "name": "Supabase"
+        }
+      }
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.MCP_BASE_URL }}/mcp",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "jsonrpc", "value": "2.0" },
-            { "name": "method", "value": "tools/call" },
-            {
-              "name": "params",
-              "value": "={{ JSON.stringify({ name: 'get_schema_overview', arguments: {} }) }}"
-            },
-            { "name": "id", "value": "1" }
-          ]
-        },
-        "options": {}
+        "jsCode": "// Classify user intent with a tiny Groq call\n// This node fires after BOTH schema and history are ready\n// We just pass through — the next Groq node does classification inline\n\nconst schema      = $('MCP: get_schema_overview').item.json;\nconst history     = $('Supabase: Fetch History').all().map(i => i.json);\nconst userMessage = $('chat').item.json.body.user_message;\nconst sessionId   = $('chat').item.json.body.session_id;\n\n// Reverse history so oldest message is first\nconst historyMessages = history\n  .reverse()\n  .map(msg => ({ role: msg.role, content: msg.content }));\n\nreturn [{\n  json: {\n    session_id:       sessionId,\n    user_message:     userMessage,\n    schema:           schema,\n    history_messages: historyMessages\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
-      "id": "mcp-schema-chat",
-      "name": "MCP: get_schema_overview",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [480, 500]
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "id": "wf4-merge-context",
+      "name": "Merge Context"
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.GROQ_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            {
-              "name": "messages",
-              "value": "={{ JSON.stringify([\n  {\n    role: 'system',\n    content: 'Classify this user query into exactly one of these intents:\\nUNDERSTAND - asking why something changed or what drives a metric\\nCOMPARE - asking to compare two things, segments, or time periods\\nBREAKDOWN - asking to decompose or drill into a number\\nQUERY - asking for specific data retrieval\\nOTHER - anything else\\n\\nRespond with ONLY the intent word. No explanation.'\n  },\n  {\n    role: 'user',\n    content: $('Webhook: /chat').item.json.body.user_message\n  }\n]) }}"
-            },
-            { "name": "max_tokens", "value": 10 },
-            { "name": "temperature", "value": 0 }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    model: \"llama-3.3-70b-versatile\",\n    temperature: 0,\n    max_tokens: 10,\n    messages: [\n      {\n        role: \"system\",\n        content: \"Classify the user query into exactly one word:\\nUNDERSTAND - asking why something changed or what drives a metric\\nCOMPARE - asking to compare two segments, time periods, or values\\nBREAKDOWN - asking to decompose or drill into a number\\nQUERY - asking for specific data retrieval\\nOTHER - anything else\\n\\nRespond with ONLY the one word. Nothing else.\"\n      },\n      {\n        role: \"user\",\n        content: $json.user_message\n      }\n    ]\n  })\n}}",
         "options": {}
       },
-      "id": "groq-intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [720, 0],
+      "id": "wf4-intent",
       "name": "Groq: Classify Intent",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [720, 400]
+      "credentials": {
+        "groqApi": {
+          "id": "your_api_key_id",
+          "name": "Groq account 1"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const intent = $input.item.json.choices[0].message.content.trim().toUpperCase();\nconst validIntents = ['UNDERSTAND', 'COMPARE', 'BREAKDOWN', 'QUERY', 'OTHER'];\nconst finalIntent = validIntents.includes(intent) ? intent : 'OTHER';\n\nconst intentPrompts = {\n  UNDERSTAND: 'The user wants to understand WHY something changed or what drives a metric. Explain the drivers in plain everyday language. Identify the key factors and quantify their contribution where possible.',\n  COMPARE: 'The user wants to COMPARE two or more things. Generate both a comparison in text and structured data for a comparison table. Identify which differences are statistically meaningful vs noise.',\n  BREAKDOWN: 'The user wants to BREAKDOWN or decompose a number. Show the components that add up to the total. Provide both a narrative explanation and structured data for visualization.',\n  QUERY: 'The user wants specific data. Generate a DuckDB SELECT query to retrieve exactly what they need, then present the results clearly.',\n  OTHER: 'Answer helpfully based on the available schema and data context.'\n};\n\nreturn [{\n  json: {\n    intent: finalIntent,\n    intent_prompt: intentPrompts[finalIntent]\n  }\n}];"
+        "jsCode": "const intentRaw = $input.first().json.choices[0].message.content.trim().toUpperCase();\nconst valid = ['UNDERSTAND', 'COMPARE', 'BREAKDOWN', 'QUERY', 'OTHER'];\nconst intent = valid.includes(intentRaw) ? intentRaw : 'OTHER';\n\nconst intentPrompts = {\n  UNDERSTAND: 'Explain WHY this metric changed or what drives it. Use plain everyday language. Quantify contributing factors where possible.',\n  COMPARE:    'Generate a clear comparison. Identify which differences are meaningful vs noise. Include a comparison table in your JSON response.',\n  BREAKDOWN:  'Decompose this number step by step. Show the components. Include both narrative and structured data for a chart.',\n  QUERY:      'Retrieve the exact data requested. Generate a SELECT query, run it, and present results clearly.',\n  OTHER:      'Answer helpfully using the available schema and data context.'\n};\n\nconst ctx = $('Merge Context').item.json;\n\nreturn [{\n  json: {\n    intent:           intent,\n    intent_prompt:    intentPrompts[intent],\n    session_id:       ctx.session_id,\n    user_message:     ctx.user_message,\n    schema:           ctx.schema,\n    history_messages: ctx.history_messages\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
-      "id": "code-route-intent",
-      "name": "Code: Route Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 400]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Build full message history for Groq\nconst history = $('Supabase: Fetch History').all();\nconst schema = $('MCP: get_schema_overview').item.json;\nconst intentData = $('Code: Route Intent').item.json;\nconst userMessage = $('Webhook: /chat').item.json.body.user_message;\nconst sessionId = $('Webhook: /chat').item.json.body.session_id;\n\n// Reverse so oldest first\nconst historyMessages = history\n  .map(item => item.json)\n  .reverse()\n  .map(msg => ({ role: msg.role, content: msg.content }));\n\nconst systemPrompt = `You are an expert data analyst assistant with access to the following database schema:\n${JSON.stringify(schema, null, 2)}\n\nIntent detected: ${intentData.intent}\n${intentData.intent_prompt}\n\nRules:\n- Always cite which table(s) and column(s) your answer draws from\n- When generating chart data, return it in the JSON response under 'chart_data'\n- If you need to query data, include a SELECT statement under 'query_to_run'\n- Be concise. Skip preamble. Lead with the insight.\n- Return a JSON object with: { \"response_text\": string, \"chart_data\": [] | null, \"query_to_run\": string | null, \"sources\": [string] }`;\n\nreturn [{\n  json: {\n    session_id: sessionId,\n    user_message: userMessage,\n    intent: intentData.intent,\n    messages_for_groq: [\n      { role: 'system', content: systemPrompt },\n      ...historyMessages,\n      { role: 'user', content: userMessage }\n    ]\n  }\n}];"
-      },
-      "id": "code-build-prompt",
-      "name": "Code: Build Full Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1200, 400]
+      "position": [960, 0],
+      "id": "wf4-route-intent",
+      "name": "Route Intent"
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $env.GROQ_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            {
-              "name": "messages",
-              "value": "={{ JSON.stringify($json.messages_for_groq) }}"
-            },
-            { "name": "max_tokens", "value": 2048 },
-            { "name": "temperature", "value": 0.3 }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{\n  const d = $json;\n  JSON.stringify({\n    model: \"llama-3.3-70b-versatile\",\n    temperature: 0.3,\n    max_tokens: 2048,\n    messages: [\n      {\n        role: \"system\",\n        content: `You are an expert data analyst. You have access to a DuckDB database with the following schema:\\n${JSON.stringify(d.schema, null, 2)}\\n\\nIntent: ${d.intent}\\n${d.intent_prompt}\\n\\nRules:\\n- Always cite which table(s) and column(s) your answer draws from in the sources array\\n- If you need to query data to answer, include a SELECT statement in query_to_run\\n- Be concise. Lead with the insight. No preamble.\\n- Return ONLY a raw JSON object with this exact structure:\\n{\\n  \"response_text\": string,\\n  \"chart_data\": [{\"chart_type\": \"bar|line\", \"title\": string, \"x_labels\": [string], \"y_values\": [number]}] or null,\\n  \"query_to_run\": string or null,\\n  \"sources\": [string]\\n}`\n      },\n      ...d.history_messages,\n      {\n        role: \"user\",\n        content: d.user_message\n      }\n    ]\n  })\n}}",
         "options": {}
       },
-      "id": "groq-chat",
-      "name": "Groq: Chat Completion",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1440, 400]
+      "typeVersion": 4.5,
+      "position": [1200, 0],
+      "id": "wf4-groq-chat",
+      "name": "Groq: Chat Completion",
+      "credentials": {
+        "groqApi": {
+          "id": "your_api_key_id",
+          "name": "Groq account 1"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.item.json.choices[0].message.content.trim();\nconst sessionId = $('Code: Build Full Prompt').item.json.session_id;\nconst userMessage = $('Code: Build Full Prompt').item.json.user_message;\nconst intent = $('Code: Build Full Prompt').item.json.intent;\n\nlet parsed;\ntry {\n  const cleaned = raw.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // If Groq didn't return JSON, treat as plain text response\n  parsed = {\n    response_text: raw,\n    chart_data: null,\n    query_to_run: null,\n    sources: []\n  };\n}\n\nreturn [{\n  json: {\n    session_id: sessionId,\n    user_message: userMessage,\n    assistant_response: parsed.response_text,\n    chart_data: parsed.chart_data || null,\n    sources: parsed.sources || [],\n    intent: intent,\n    query_to_run: parsed.query_to_run || null\n  }\n}];"
+        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\nconst ctx = $('Route Intent').item.json;\n\nlet parsed;\ntry {\n  const cleaned = raw.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = {\n    response_text: raw,\n    chart_data:    null,\n    query_to_run:  null,\n    sources:       []\n  };\n}\n\nreturn [{\n  json: {\n    session_id:       ctx.session_id,\n    user_message:     ctx.user_message,\n    intent:           ctx.intent,\n    response_text:    parsed.response_text  || '',\n    chart_data:       parsed.chart_data     || null,\n    query_to_run:     parsed.query_to_run   || null,\n    sources:          parsed.sources        || []\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
-      "id": "code-parse-chat",
-      "name": "Code: Parse Chat Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1680, 400]
+      "position": [1440, 0],
+      "id": "wf4-parse-response",
+      "name": "Parse Chat Response"
     },
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": { "caseSensitive": true, "typeValidation": "strict", "version": 3 },
+          "conditions": [
             {
-              "value1": "={{ $json.query_to_run }}",
-              "operation": "isNotEmpty"
+              "id": "query-check-id",
+              "leftValue": "={{ $json.query_to_run }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
-      "id": "if-needs-query",
-      "name": "IF: Needs Data Query?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [1920, 400]
+      "typeVersion": 2.3,
+      "position": [1680, 0],
+      "id": "wf4-if-query",
+      "name": "IF: Needs Query?"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.MCP_BASE_URL }}/mcp",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
+        "url": "http://host.docker.internal:8000/tools/run_analysis_query",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "jsonrpc", "value": "2.0" },
-            { "name": "method", "value": "tools/call" },
-            {
-              "name": "params",
-              "value": "={{ JSON.stringify({ name: 'run_analysis_query', arguments: { sql: $json.query_to_run } }) }}"
-            },
-            { "name": "id", "value": "4" }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sql\": \"{{ $json.query_to_run }}\"\n}",
         "options": {}
       },
-      "id": "mcp-run-query",
-      "name": "MCP: run_analysis_query",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [2160, 280]
+      "typeVersion": 4.5,
+      "position": [1920, -120],
+      "id": "wf4-run-query",
+      "name": "MCP: run_analysis_query"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge query results back into the response if a query was run\nconst parseNode = $('Parse Chat Response').item.json;\n\nlet queryResults = null;\ntry {\n  const queryNode = $('MCP: run_analysis_query').item;\n  if (queryNode) queryResults = queryNode.json;\n} catch(e) {\n  // No query was run — IF took the false branch\n}\n\nreturn [{\n  json: {\n    session_id:    parseNode.session_id,\n    user_message:  parseNode.user_message,\n    intent:        parseNode.intent,\n    response_text: parseNode.response_text,\n    chart_data:    parseNode.chart_data,\n    sources:       parseNode.sources,\n    query_results: queryResults\n  }\n}];",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 0],
+      "id": "wf4-build-final",
+      "name": "Build Final Response"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO messages (session_id, role, content) VALUES ('{{ $('Code: Parse Chat Response').item.json.session_id }}', 'user', '{{ $('Code: Parse Chat Response').item.json.user_message.replace(/'/g, \"''\") }}'); INSERT INTO messages (session_id, role, content) VALUES ('{{ $('Code: Parse Chat Response').item.json.session_id }}', 'assistant', '{{ $('Code: Parse Chat Response').item.json.assistant_response.replace(/'/g, \"''\") }}');",
+        "query": "=SELECT ensure_session('{{ $json.session_id }}'); INSERT INTO messages (session_id, role, content) VALUES ('{{ $json.session_id }}', 'user', '{{ $json.user_message.replace(/'/g, \"''\") }}'); INSERT INTO messages (session_id, role, content) VALUES ('{{ $json.session_id }}', 'assistant', '{{ $json.response_text.replace(/'/g, \"''\") }}');",
         "options": {}
       },
-      "id": "supabase-save",
-      "name": "Supabase: Save Messages",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [2400, 400]
+      "typeVersion": 2.5,
+      "position": [2400, 0],
+      "id": "wf4-save-messages",
+      "name": "Supabase: Save Messages",
+      "credentials": {
+        "postgres": {
+          "id": "your_supabase_credential_id",
+          "name": "Supabase"
+        }
+      }
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: 'ok', response_text: $('Code: Parse Chat Response').item.json.assistant_response, chart_data: $('Code: Parse Chat Response').item.json.chart_data, sources: $('Code: Parse Chat Response').item.json.sources, intent: $('Code: Parse Chat Response').item.json.intent, query_results: $('IF: Needs Data Query?').item.json || null }) }}"
+        "options": {}
       },
-      "id": "respond-chat",
-      "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [2640, 400]
+      "typeVersion": 1.5,
+      "position": [2640, 0],
+      "id": "wf4-respond",
+      "name": "Respond to Webhook"
     }
   ],
   "connections": {
-    "Webhook: /chat": {
+    "chat": {
       "main": [
         [
-          { "node": "Supabase: Fetch History", "type": "main", "index": 0 },
-          { "node": "MCP: get_schema_overview", "type": "main", "index": 0 }
+          { "node": "MCP: get_schema_overview", "type": "main", "index": 0 },
+          { "node": "Supabase: Fetch History", "type": "main", "index": 0 }
         ]
       ]
     },
-    "Supabase: Fetch History": {
-      "main": [[{ "node": "Groq: Classify Intent", "type": "main", "index": 0 }]]
-    },
     "MCP: get_schema_overview": {
+      "main": [[{ "node": "Merge Context", "type": "main", "index": 0 }]]
+    },
+    "Supabase: Fetch History": {
+      "main": [[{ "node": "Merge Context", "type": "main", "index": 0 }]]
+    },
+    "Merge Context": {
       "main": [[{ "node": "Groq: Classify Intent", "type": "main", "index": 0 }]]
     },
     "Groq: Classify Intent": {
-      "main": [[{ "node": "Code: Route Intent", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Route Intent", "type": "main", "index": 0 }]]
     },
-    "Code: Route Intent": {
-      "main": [[{ "node": "Code: Build Full Prompt", "type": "main", "index": 0 }]]
-    },
-    "Code: Build Full Prompt": {
+    "Route Intent": {
       "main": [[{ "node": "Groq: Chat Completion", "type": "main", "index": 0 }]]
     },
     "Groq: Chat Completion": {
-      "main": [[{ "node": "Code: Parse Chat Response", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Parse Chat Response", "type": "main", "index": 0 }]]
     },
-    "Code: Parse Chat Response": {
-      "main": [[{ "node": "IF: Needs Data Query?", "type": "main", "index": 0 }]]
+    "Parse Chat Response": {
+      "main": [[{ "node": "IF: Needs Query?", "type": "main", "index": 0 }]]
     },
-    "IF: Needs Data Query?": {
+    "IF: Needs Query?": {
       "main": [
         [{ "node": "MCP: run_analysis_query", "type": "main", "index": 0 }],
-        [{ "node": "Supabase: Save Messages", "type": "main", "index": 0 }]
+        [{ "node": "Build Final Response", "type": "main", "index": 0 }]
       ]
     },
     "MCP: run_analysis_query": {
+      "main": [[{ "node": "Build Final Response", "type": "main", "index": 0 }]]
+    },
+    "Build Final Response": {
       "main": [[{ "node": "Supabase: Save Messages", "type": "main", "index": 0 }]]
     },
     "Supabase: Save Messages": {
@@ -264,5 +251,5 @@
     }
   },
   "settings": { "executionOrder": "v1" },
-  "_comment": "Webhook /chat. Parallel: fetch Supabase history + schema. Intent classification. Full prompt build. Groq chat. Optional MCP query execution. Supabase save. Respond."
+  "active": false
 }
