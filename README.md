@@ -1,63 +1,144 @@
 # AskWithData 📊🤖
 
-**Autonomous AI Data Analytics Engine & Dual-Protocol MCP Backend Server**
+**Autonomous AI Data Analytics Engine & Dual-Protocol MCP Server with n8n Workflow Automation**
 
-AskWithData is a high-performance data analytics platform powered by **DuckDB**, **FastAPI**, **Model Context Protocol (MCP)**, **n8n**, and **Supabase (PostgreSQL)**. It bridges the gap between raw unstructured CSV data and conversational AI analytics by offering automated ingestion, LLM-driven data cleaning, automated statistical profiling, and interactive natural-language querying.
+AskWithData is an enterprise-grade AI analytics system powered by **DuckDB**, **FastAPI**, **Model Context Protocol (MCP)**, **n8n Workflow Automation**, **Groq LLM Acceleration**, and **Supabase (PostgreSQL)**. 
 
----
-
-## 🌟 Key Features
-
-* ⚡ **Dual-Protocol Architecture**: Serves both **MCP (Model Context Protocol)** endpoints for AI clients (Claude Desktop, Cursor, etc.) at `/mcp` and **REST API endpoints** for n8n workflow HTTP nodes at `/tools/*`.
-* 🚀 **Vectorized DuckDB Analytics**: Uses DuckDB's in-process columnar engine (`read_csv_auto`) for sub-50ms OLAP query execution on large CSV datasets.
-* 🤖 **Autonomous n8n Workflows**:
-  * **WF1 – CSV Ingest**: Automatic loading of raw CSV files into DuckDB schemas.
-  * **WF2 – AI Cleaning**: LLM-guided anomaly detection and query-based automated data cleaning.
-  * **WF3 – Initial Insights**: Instant Exploratory Data Analysis (EDA) generating null counts, numerical statistics (min/max/avg/stddev), date ranges, and top frequency distributions.
-  * **WF4 – Interactive Chat**: Multi-turn conversational SQL assistant with persistent chat context.
-* 🔒 **Security & SQL Guardrails**: Strict separation between read-only analysis (`SELECT` queries) and state-modifying transformations (`UPDATE`, `DELETE`, `ALTER TABLE`), blocking destructive SQL keywords (`DROP`, `TRUNCATE`, `CREATE`, `COPY`).
-* 🛡️ **Robust JSON Serialization Engine**: Built-in 2-pass float sanitizer (`safe_float` and `safe_df_to_records`) preventing server crashes caused by non-compliant float values (`NaN`, `Infinity`, `-Infinity`).
-* 💾 **PostgreSQL Session Memory**: Session history and chat state management stored in **Supabase** with composite B-Tree indexing (`session_id`, `created_at DESC`) for fast sub-25ms context retrieval.
-* ☁️ **Cloud-Ready & Keep-Alive Ping**: Includes a `/ping` endpoint and automated keep-alive polling to prevent cloud host (e.g., Render free tier) container spin-downs.
+It transforms raw CSV files into an interactive, self-cleaning, conversational analytics platform with automated Exploratory Data Analysis (EDA), structured intent classification, self-correcting SQL execution, and session-aware conversational AI.
 
 ---
 
-## 📐 Architecture & Workflow Pipeline
+## 🌟 Architecture & Key Features
+
+* ⚡ **Dual-Protocol Engine**: Exposes both **MCP (Model Context Protocol)** endpoints for AI IDEs (Claude Desktop, Cursor) at `/mcp` and dedicated **REST endpoints** for n8n Webhook nodes at `/tools/*`.
+* 🚀 **Vectorized DuckDB Performance**: High-speed OLAP analytical queries powered by DuckDB's in-process engine (`read_csv_auto`), enabling sub-50ms execution on 100K+ row datasets.
+* 🤖 **4 Production-Grade n8n Automation Workflows**:
+  * **`WF1 - CSV Ingest.json`**: Webhook-triggered CSV loader that imports files into DuckDB and calls Groq (`openai/gpt-oss-120b`) to suggest 3–4 tailored data cleaning recommendations.
+  * **`WF2 - AI Cleaning.json`**: LLM SQL generator with built-in AST/regex safety validation and an **autonomous self-healing retry loop** to re-prompt and fix failed cleaning statements.
+  * **`WF3 - Initial Insights.json`**: Parallel multi-table data profiler and automated EDA engine powered by Groq (`llama-3.3-70b-versatile`) producing structured summaries, metrics, anomalies, and chart configurations.
+  * **`WF4 - Interactive Chat.json`**: Conversational SQL assistant with **5-way Intent Classification** (`UNDERSTAND`, `COMPARE`, `BREAKDOWN`, `QUERY`, `OTHER`), parallel context gathering (Supabase history + schema overview), dynamic DuckDB query execution, and PostgreSQL persistence.
+* 🔒 **Security & SQL Guardrails**: Strict separation between read-only analysis (`run_analysis_query` enforcing `SELECT` only) and state-modifying operations (`execute_cleaning_query` allowing only `UPDATE`, `DELETE FROM`, `ALTER TABLE` while blocking `DROP`, `TRUNCATE`, `CREATE`, `INSERT`).
+* 🛡️ **Zero-Crash JSON Sanitizer**: 2-pass sanitization (`safe_float` and `safe_df_to_records`) catching float `NaN`, `Infinity`, and `-Infinity` edge cases from Pandas/DuckDB to guarantee 100% JSON-compliant API responses.
+* 💾 **Low-Latency Session Memory**: Powered by **Supabase PostgreSQL** with composite B-Tree indexing (`session_id`, `created_at DESC`) for sub-25ms chat history retrieval.
+
+---
+
+## 📐 System Architecture Diagram
 
 ```mermaid
 flowchart TD
-    subgraph Data Sources
-        CSV[Raw CSV Files]
+    subgraph Clients & Frontends
+        User[User / Streamlit / API Client]
+        Claude[Claude Desktop / Cursor IDE]
     end
 
-    subgraph AskWithData Backend
-        API[FastAPI Server - mcp_server.py]
-        DuckDB[(DuckDB In-Process Storage)]
-        MCP[MCP Server Interface /mcp]
+    subgraph n8n Workflow Automation Engine
+        WF1[WF1: CSV Ingest Workflow]
+        WF2[WF2: AI Cleaning & Self-Healing Retry Loop]
+        WF3[WF3: Parallel Insights & EDA Generator]
+        WF4[WF4: Interactive Chat & Intent Classifier]
+    end
+
+    subgraph AskWithData Backend mcp_server.py
         REST[REST Endpoints /tools/*]
+        MCP[MCP Protocol Endpoint /mcp]
+        Guard[SQL Security Guardrails]
         Sanitizer[JSON Float Sanitizer]
-        Guardrails[SQL Guardrails & Security]
+        DuckDB[(DuckDB In-Memory/Disk OLAP)]
     end
 
-    subgraph AI Clients & Automation
-        Claude[Claude Desktop / Cursor]
-        N8N[n8n Workflows WF1-WF4]
+    subgraph External Cloud Services
+        Groq[Groq API: gpt-oss-120b / llama-3.3-70b]
+        Supabase[(Supabase PostgreSQL Chat Memory)]
     end
 
-    subgraph Memory & Context
-        Supabase[(Supabase PostgreSQL)]
-    end
+    User -->|POST /ingest| WF1
+    User -->|POST /clean| WF2
+    User -->|POST /insights| WF3
+    User -->|POST /chat| WF4
 
-    CSV -->|load_csv_to_table| REST
-    Claude -->|MCP Protocol| MCP
-    N8N -->|HTTP Requests| REST
-    REST --> Guardrails
-    Guardrails --> DuckDB
+    Claude <-->|JSON-RPC /mcp| MCP
+
+    WF1 -->|HTTP POST| REST
+    WF2 -->|HTTP POST| REST
+    WF3 -->|JSON-RPC /mcp| MCP
+    WF4 -->|JSON-RPC /mcp| MCP
+
+    WF1 <-->|Generate Recommendations| Groq
+    WF2 <-->|Generate & Fix Cleaning SQL| Groq
+    WF3 <-->|Narrate Structured EDA JSON| Groq
+    WF4 <-->|Classify Intent & Generate SQL| Groq
+    WF4 <-->|Fetch & Store Chat Logs| Supabase
+
+    REST --> Guard
+    MCP --> Guard
+    Guard --> DuckDB
     DuckDB --> Sanitizer
-    Sanitizer --> REST
-    Sanitizer --> MCP
-    N8N <-->|Session History| Supabase
 ```
+
+---
+
+## 🔄 Detailed n8n Workflow Breakdowns
+
+### 1. `WF1 - CSV Ingest.json` (Automated Ingestion & Cleaning Suggestions)
+* **Trigger**: Webhook `POST /ingest` receiving `{ "files": [ { "file_path": "...", "table_name": "..." } ] }`.
+* **Flow**:
+  1. `Split Files Array` (Code Node): Splits incoming file list into individual execution items.
+  2. `MCP: load_csv_to_table`: Calls backend REST endpoint to ingest CSV into DuckDB.
+  3. `Collect Load Results` (Aggregate Node): Consolidates ingestion status across all files.
+  4. `MCP: get_schema_overview`: Retrieves updated DuckDB table schemas and sample rows.
+  5. `Groq: Suggest Cleaning`: Prompts Groq (`openai/gpt-oss-120b`) to generate 3–4 actionable cleaning recommendations plus a custom SQL option.
+  6. `Respond to Webhook`: Returns loaded schema and cleaning suggestions to the caller.
+
+---
+
+### 2. `WF2 - AI Cleaning.json` (Guardrailed SQL Execution & Self-Healing Retry Loop)
+* **Trigger**: Webhook `POST /clean` receiving `{ "user_instruction": "..." }`.
+* **Flow**:
+  1. `MCP: get_schema_overview`: Fetches active table schemas.
+  2. `Groq: Generate SQL`: Asks Groq (`openai/gpt-oss-120b`) to generate standard `UPDATE`, `DELETE FROM`, or `ALTER TABLE` statements.
+  3. `Validate + Split SQL` (Code Node): Enforces strict safety rules—rejects any statement containing `DROP`, `TRUNCATE`, `CREATE`, or `INSERT`.
+  4. `MCP: execute_cleaning_query`: Sends validated statements to DuckDB.
+  5. **Self-Healing Retry Loop (`If: has_failures`)**:
+     * If execution fails, `Build Retry Prompt` extracts the exact DuckDB error traceback and schema.
+     * `Groq: Retry SQL` re-generates corrected SQL statements.
+     * `Validate + Split SQL1` re-validates and executes via `MCP: execute_cleaning_query1`.
+  6. `Respond to Webhook`: Delivers detailed execution results (rows affected, success counts, statement breakdown).
+
+---
+
+### 3. `WF3 - Initial Insights.json` (Parallel Multi-Table EDA & Profiling)
+* **Trigger**: Webhook `POST /insights` receiving `{ "tables": ["table1", "table2"] }`.
+* **Flow**:
+  1. `Code: Split Tables`: Fans out table names into parallel streams.
+  2. `MCP: generate_initial_insights`: Executes parallel JSON-RPC calls over `/mcp` fetching column nulls, min/max/avg/stddev, date boundaries, and top string frequencies.
+  3. `Aggregate: All Table Stats`: Combines statistical metrics from all tables.
+  4. `Groq: Narrate Insights`: Prompts Groq (`llama-3.3-70b-versatile`) to generate structured JSON containing:
+     * `summary_text`: Executive data summary.
+     * `key_metrics`: Highlighted metrics per table.
+     * `anomalies`: Detected data quality issues.
+     * `chart_data`: Formatted chart configurations (bar/line charts with x_labels and y_values).
+  5. `Code: Parse Insights JSON`: Safely strips markdown fences and validates JSON schema before responding to Webhook.
+
+---
+
+### 4. `WF4 - Interactive Chat.json` (Intent Classification & Persistent Memory Chat)
+* **Trigger**: Webhook `POST /chat` receiving `{ "session_id": "...", "user_message": "..." }`.
+* **Flow**:
+  1. **Parallel Pre-Fetch**:
+     * `Supabase: Fetch History`: Retrieves last 10 session messages from Supabase PostgreSQL using optimized B-Tree index.
+     * `MCP: get_schema_overview`: Pulls active DuckDB schema.
+  2. `Groq: Classify Intent`: Uses Groq (`llama-3.3-70b-versatile`) to categorize query into one of 5 distinct intents:
+     * `UNDERSTAND`: Explaining metric drivers and root causes.
+     * `COMPARE`: Segment & period comparison.
+     * `BREAKDOWN`: Decomposing totals.
+     * `QUERY`: Data retrieval requiring DuckDB `SELECT`.
+     * `OTHER`: General assistance.
+  3. `Code: Route Intent` & `Code: Build Full Prompt`: Constructs tailored system prompts incorporating schema, history, and intent rules.
+  4. `Groq: Chat Completion`: Generates response text, source column citations, optional chart data, and optional SQL `query_to_run`.
+  5. `IF: Needs Data Query?`: If `query_to_run` is present, calls `MCP: run_analysis_query` to fetch live DuckDB results.
+  6. `Supabase: Save Messages`: Persists both user and assistant messages into PostgreSQL `messages` table.
+  7. `Respond to Webhook`: Returns answer text, chart payload, data sources, intent type, and query results.
 
 ---
 
@@ -65,51 +146,51 @@ flowchart TD
 
 ```text
 ask_with_data/
-├── mcp_server.py             # FastAPI + DuckDB server with MCP & REST endpoints
-├── requirement.txt           # Python dependencies
+├── mcp_server.py             # FastAPI + DuckDB core backend (MCP & REST dual mode)
+├── requirement.txt           # Python dependencies (mcp, fastapi, duckdb, pandas, uvicorn)
 ├── .env.example              # Environment variables template
-├── supabase_commands.txt     # PostgreSQL table schema & composite indexing script
-├── WF1 - CSV Ingest.json     # n8n Workflow: CSV ingestion into DuckDB
-├── WF2 - AI Cleaning.json    # n8n Workflow: AI-driven data cleaning
-├── WF3 - Initial Insights.json # n8n Workflow: Automated EDA & data profiling
-├── WF4 - Interactive Chat.json # n8n Workflow: Conversational data query assistant
-├── analytics.duckdb          # DuckDB database file
-└── demo.csv                  # Sample dataset for testing
+├── supabase_commands.txt     # PostgreSQL SQL DDL & B-Tree index setup script
+├── WF1 - CSV Ingest.json     # n8n Workflow: CSV ingestion & cleaning suggestions
+├── WF2 - AI Cleaning.json    # n8n Workflow: Guardrailed cleaning & retry loop
+├── WF3 - Initial Insights.json # n8n Workflow: Parallel EDA & chart generation
+├── WF4 - Interactive Chat.json # n8n Workflow: Intent classifier & chat assistant
+├── analytics.duckdb          # Local DuckDB database storage file
+└── demo.csv                  # Sample test dataset
 ```
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Installation & Quick Start Guide
 
 ### 1. Prerequisites
-
-- **Python**: `3.10` or higher
-- **PostgreSQL Database**: Supabase account (or local PostgreSQL instance)
-- **n8n**: Cloud or self-hosted instance (optional, for workflow automation)
+- **Python**: `3.10+`
+- **PostgreSQL Database**: Supabase instance (or local PostgreSQL)
+- **n8n**: Cloud or self-hosted instance
+- **Groq API Key**: For fast LLM inference (`gpt-oss-120b` and `llama-3.3-70b-versatile`)
 
 ---
 
-### 2. Environment Setup
+### 2. Environment Configuration
 
-Clone the repository and set up a virtual environment:
+Clone repository and initialize virtual environment:
 
 ```bash
 git clone https://github.com/your-username/ask_with_data.git
 cd ask_with_data
 
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
 pip install -r requirement.txt
 ```
 
-Create a `.env` file from `.env.example`:
+Create `.env` file:
 
 ```bash
 cp .env.example .env
 ```
 
-Configure your `.env` variables:
+Configure `.env` parameters:
 
 ```env
 DUCKDB_PATH=/tmp/analytics.duckdb
@@ -120,9 +201,9 @@ MCP_MOUNT_PATH=/mcp
 
 ---
 
-### 3. Database Initialization (Supabase / PostgreSQL)
+### 3. Database DDL & Indexing (Supabase / PostgreSQL)
 
-Open the SQL Editor in your Supabase dashboard (or PostgreSQL client) and execute the commands from `supabase_commands.txt`:
+Execute the script from `supabase_commands.txt` in your Supabase SQL Editor:
 
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
@@ -139,11 +220,11 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- B-Tree composite index for low-latency session history fetch
+-- Composite B-Tree index for ultra-low latency history retrieval (<25ms)
 CREATE INDEX IF NOT EXISTS idx_messages_session_time
   ON messages (session_id, created_at DESC);
 
--- Helper function to ensure session exists
+-- Session initialization helper function
 CREATE OR REPLACE FUNCTION ensure_session(p_session_id TEXT)
 RETURNS VOID AS $$
 BEGIN
@@ -156,76 +237,52 @@ $$ LANGUAGE plpgsql;
 
 ---
 
-### 4. Running the Server
+### 4. Running the Backend Server
 
-#### Development Mode:
 ```bash
-python mcp_server.py
-```
-
-#### Production Mode (Uvicorn):
-```bash
+# Production mode using Uvicorn
 uvicorn mcp_server:app --host 0.0.0.0 --port 8000
 ```
 
-Once running, the server exposes:
+Available interfaces:
 * **REST API Tools**: `http://localhost:8000/tools/*`
-* **MCP Interface**: `http://localhost:8000/mcp`
+* **MCP Server**: `http://localhost:8000/mcp`
 * **Keep-Alive Ping**: `http://localhost:8000/ping`
 
 ---
 
-## 🛠️ API & MCP Tool Reference
+### 5. Importing n8n Workflows
 
-| Tool Name | Endpoint / Function | Description |
-| :--- | :--- | :--- |
-| `get_schema_overview` | `POST /tools/get_schema_overview` | Returns table names, column data types, row counts, and sample records. |
-| `load_csv_to_table` | `POST /tools/load_csv_to_table` | Loads a local CSV file into DuckDB via vectorized `read_csv_auto()`. |
-| `generate_initial_insights` | `POST /tools/generate_initial_insights` | Computes null counts, min/max/avg/stddev, date ranges, and top value frequencies. |
-| `execute_cleaning_query` | `POST /tools/execute_cleaning_query` | Safely executes `UPDATE`, `DELETE`, or `ALTER TABLE` data cleaning queries. |
-| `run_analysis_query` | `POST /tools/run_analysis_query` | Executes read-only `SELECT` analytical queries and returns sanitized JSON records. |
-| `ping` | `GET /ping` | Lightweight status endpoint for keep-alive monitoring. |
+1. Open your n8n dashboard -> **Workflows** -> **Import from File**.
+2. Upload `WF1 - CSV Ingest.json`, `WF2 - AI Cleaning.json`, `WF3 - Initial Insights.json`, and `WF4 - Interactive Chat.json`.
+3. Set up credentials:
+   * **Groq API Credential**: Add your Groq API key in n8n HTTP Request nodes or environment variable `GROQ_API_KEY`.
+   * **Postgres Credential**: Configure PostgreSQL credentials pointing to your Supabase connection string.
+   * **MCP Base URL**: Set environment variable `MCP_BASE_URL` (e.g. `http://host.docker.internal:8000`).
 
 ---
 
-## 💻 Claude Desktop / MCP Configuration
+## 🛠️ REST API & MCP Tools Summary
 
-To connect Claude Desktop to this MCP server, add the following entry to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ask-with-data": {
-      "command": "python",
-      "args": [
-        "/path/to/ask_with_data/mcp_server.py"
-      ]
-    }
-  }
-}
-```
+| Function | Endpoint / MCP Tool | Method | Description |
+| :--- | :--- | :--- | :--- |
+| `get_schema_overview` | `/tools/get_schema_overview` | `POST` | Inspects loaded DuckDB tables, column types, row counts, and 3-row samples. |
+| `load_csv_to_table` | `/tools/load_csv_to_table` | `POST` | Ingests a disk CSV file into DuckDB via vectorized `read_csv_auto()`. |
+| `execute_cleaning_query` | `/tools/execute_cleaning_query` | `POST` | Executes single `UPDATE`, `DELETE FROM`, or `ALTER TABLE` cleaning queries safely. |
+| `generate_initial_insights`| `/tools/generate_initial_insights` | `POST` | Computes column nulls, min/max/avg/stddev, date ranges, and string frequencies. |
+| `run_analysis_query` | `/tools/run_analysis_query` | `POST` | Executes read-only `SELECT` queries and returns JSON-sanitized data records. |
+| `ping` | `/ping` | `GET` | Keep-alive health check for cloud container maintenance. |
 
 ---
 
-## ⚙️ n8n Workflow Integration
+## 🛡️ Security Guardrails & Exception Protection
 
-Import the provided JSON workflow files into your n8n workspace:
-
-1. **`WF1 - CSV Ingest.json`**: Triggers CSV upload into the backend DuckDB database.
-2. **`WF2 - AI Cleaning.json`**: Reads schema profiles, uses an LLM node to write cleaning SQL, and applies updates safely.
-3. **`WF3 - Initial Insights.json`**: Pulls statistical summaries and formats executive EDA reports.
-4. **`WF4 - Interactive Chat.json`**: Handles user messages, loads context from Supabase, runs DuckDB analysis queries, and returns AI responses.
-
----
-
-## 🛡️ Security & Guardrails
-
-* **Read vs. Write Isolation**: Read-only queries (`run_analysis_query`) are restricted strictly to `SELECT` statements. Any embedded data modification attempt (`INSERT`, `UPDATE`, `DELETE`, `DROP`) inside a SELECT statement is caught and blocked.
-* **Cleaning SQL Enforcement**: `execute_cleaning_query` only allows queries starting with `UPDATE`, `DELETE FROM`, or `ALTER TABLE`. Destructive statements like `DROP`, `TRUNCATE`, `CREATE`, and `COPY` are strictly prohibited.
-* **Input Validation**: Table names are validated against regex `^[a-zA-Z_][a-zA-Z0-9_]*$` to prevent SQL injection during dynamic table creation.
+1. **Query AST & Prefix Filtering**: `_execute_cleaning_query` and `_run_analysis_query` strictly enforce allowable SQL operation prefixes while filtering out destructive actions (`DROP`, `TRUNCATE`, `INSERT`, `CREATE`).
+2. **Robust Float Handling**: Pandas/DuckDB numerical calculations can return `NaN`, `Inf`, or `-Inf`. The server employs `safe_float()` and `safe_df_to_records()` to convert invalid float types into `None` (JSON `null`), preventing API serialization exceptions.
+3. **Table Name Sanitization**: Validates table names against regex `^[a-zA-Z_][a-zA-Z0-9_]*$` to avoid SQL injection on dynamic table creation.
 
 ---
 
 ## 📜 License
 
-This project is open-source and available under the [MIT License](LICENSE).
+This project is released under the [MIT License](LICENSE).
