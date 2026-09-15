@@ -10,7 +10,7 @@
       },
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [-80, -64],
+      "position": [-80, 0],
       "id": "5b780103-1b99-4a38-90fd-29fef44e661b",
       "name": "clean",
       "webhookId": "071e8a3c-d04c-4187-b82a-9f4d4eda0140"
@@ -26,7 +26,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [144, -64],
+      "position": [160, 0],
       "id": "50484f06-54ef-452d-9a46-b0306cfb8437",
       "name": "MCP: get_schema_overview"
     },
@@ -38,12 +38,12 @@
         "nodeCredentialType": "groqApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{\n  JSON.stringify({\n    model: \"openai/gpt-oss-120b\",\n    temperature: 0.1,\n    max_tokens: 1024,\n    messages: [\n      {\n        role: \"system\",\n        content: `You are a DuckDB SQL expert. Generate ONLY simple SQL cleaning statements.\nRules:\n- Use only: DELETE FROM, UPDATE <table> SET, ALTER TABLE\n- One statement per line\n- No semicolons at end\n- No markdown, no explanations, just raw SQL\n- No CTEs, no subqueries\n- Only use table names that exist in the schema\n\nSchema:\n` + JSON.stringify($('MCP: get_schema_overview').item.json)\n      },\n      {\n        role: \"user\",\n        content: \"Cleaning instruction: \" + $('clean').item.json.body.user_instruction\n      }\n    ]\n  })\n}}",
+        "jsonBody": "={{\n  JSON.stringify({\n    model: \"llama-3.3-70b-versatile\",\n    temperature: 0.1,\n    max_tokens: 1024,\n    messages: [\n      {\n        role: \"system\",\n        content: `You are a DuckDB SQL expert. Generate ONLY simple SQL cleaning statements.\\nRules:\\n- Use ONLY: DELETE FROM, UPDATE <table> SET ... WHERE, ALTER TABLE ... RENAME COLUMN\\n- One statement per line\\n- No semicolons at end\\n- No markdown, no explanations, just raw SQL\\n- No CTEs, no subqueries\\n- Do NOT use REPLACE(), REGEXP_REPLACE(), or any function calls inside UPDATE\\n- For string cleaning use: TRIM(), UPPER(), LOWER(), CAST()\\n- For replacing a specific value use: CASE WHEN col = 'old' THEN 'new' ELSE col END\\n- For NULL replacement use: CASE WHEN col = '.' OR col = '' THEN NULL ELSE col END\\n- Only use table/column names that exist in the schema\\n\\nSchema:\\n` + JSON.stringify($('MCP: get_schema_overview').item.json)\n      },\n      {\n        role: \"user\",\n        content: \"Cleaning instruction: \" + $('clean').item.json.body.user_instruction\n      }\n    ]\n  })\n}}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [368, -64],
+      "position": [400, 0],
       "id": "410113cc-ce51-403b-807c-d2a7e3b3c065",
       "name": "Groq: Generate SQL",
       "credentials": {
@@ -55,15 +55,14 @@
     },
     {
       "parameters": {
-        "aggregate": "aggregateAllItemData",
-        "destinationFieldName": "results",
-        "options": {}
+        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nconst ALLOWED = ['DELETE FROM', 'UPDATE', 'ALTER TABLE'];\nconst BLOCKED = ['DROP', 'TRUNCATE', 'CREATE', 'INSERT', 'REPLACE', 'COPY'];\n\nconst statements = raw\n  .split('\\n')\n  .map(s => s.trim())\n  .filter(s => s.length > 0)\n  .filter(s => !s.startsWith('--') && !s.startsWith('#'));\n\nconst validated = [];\nconst rejected  = [];\n\nfor (const stmt of statements) {\n  const upper = stmt.toUpperCase();\n  const isAllowed = ALLOWED.some(p => upper.startsWith(p));\n  const isBlocked = BLOCKED.some(k => upper.includes(k));\n\n  if (isAllowed && !isBlocked) {\n    validated.push(stmt);\n  } else {\n    rejected.push({ stmt, reason: isBlocked ? 'blocked keyword' : 'not in allowlist' });\n  }\n}\n\nif (validated.length === 0) {\n  throw new Error('No valid SQL statements generated. Rejected: ' + JSON.stringify(rejected));\n}\n\nreturn validated.map(sql => ({ json: { sql } }));",
+        "mode": "runOnceForAllItems"
       },
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [1040, -64],
-      "id": "34ede788-821c-4f37-8ee6-02a3c529d56b",
-      "name": "Aggregate"
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 0],
+      "id": "cc19dc03-982b-494d-b85f-e31c53f5db16",
+      "name": "Validate + Split SQL"
     },
     {
       "parameters": {
@@ -76,27 +75,30 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [816, -64],
+      "position": [880, 0],
       "id": "0441264c-70c1-4c83-82e3-ddc77915a40e",
       "name": "MCP: execute_cleaning_query"
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nconst ALLOWED = ['DELETE FROM', 'UPDATE', 'ALTER TABLE'];\nconst BLOCKED = ['DROP', 'TRUNCATE', 'CREATE', 'INSERT'];\n\nconst statements = raw\n  .split('\\n')\n  .map(s => s.trim())\n  .filter(s => s.length > 0)\n  .filter(s => !s.startsWith('--') && !s.startsWith('#'));\n\nconst validated = [];\nconst rejected  = [];\n\nfor (const stmt of statements) {\n  const upper = stmt.toUpperCase();\n  const isAllowed = ALLOWED.some(p => upper.startsWith(p));\n  const isBlocked = BLOCKED.some(k => upper.includes(k));\n\n  if (isAllowed && !isBlocked) {\n    validated.push(stmt);\n  } else {\n    rejected.push(stmt);\n  }\n}\n\nif (validated.length === 0) {\n  throw new Error('No valid SQL statements generated. Rejected: ' + JSON.stringify(rejected));\n}\n\nreturn validated.map(sql => ({ json: { sql } }));"
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "results",
+        "options": {}
       },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [592, -64],
-      "id": "cc19dc03-982b-494d-b85f-e31c53f5db16",
-      "name": "Validate + Split SQL"
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1120, 0],
+      "id": "34ede788-821c-4f37-8ee6-02a3c529d56b",
+      "name": "Aggregate"
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate outputs a single item: { results: [ {success, sql, error?}, ... ] }\nconst aggregated = $input.first().json;\nconst flatResults = Array.isArray(aggregated.results) ? aggregated.results : [aggregated];\n\nconst failed  = flatResults.filter(r => r.success === false);\nconst success = flatResults.filter(r => r.success === true);\n\nreturn [{\n  json: {\n    attempt:       1,\n    all_results:   flatResults,\n    failed_stmts:  failed.map(r => ({ sql: r.sql, error: r.error })),\n    success_count: success.length,\n    fail_count:    failed.length,\n    has_failures:  failed.length > 0,\n  }\n}];"
+        "jsCode": "const aggregated = $input.first().json;\nconst results = aggregated.results || [];\n\nconst failed  = results.filter(r => r.success === false);\nconst success = results.filter(r => r.success === true);\n\nreturn [{\n  json: {\n    attempt:       1,\n    all_results:   results,\n    failed_stmts:  failed.map(r => ({ sql: r.sql, error: r.error })),\n    success_count: success.length,\n    fail_count:    failed.length,\n    has_failures:  failed.length > 0\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1264, -64],
+      "position": [1360, 0],
       "id": "ef20f537-ce9d-400c-87d4-1c2e22f55058",
       "name": "Check Attempt 1"
     },
@@ -127,19 +129,20 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [1488, -64],
+      "position": [1600, 0],
       "id": "4216ae0a-5474-40ff-9eff-8065d40bfca2",
-      "name": "If"
+      "name": "IF: Retry 1 Needed?"
     },
     {
       "parameters": {
-        "jsCode": "const data         = $input.first().json;\nconst failedStmts  = data.failed_stmts;\nconst schema       = $('MCP: get_schema_overview').item.json;\n\nconst failureSummary = failedStmts\n  .map(f => `SQL: ${f.sql}\\nError: ${f.error}`)\n  .join('\\n\\n');\n\nreturn [{\n  json: {\n    retry_prompt: `The following SQL statements failed. Fix them and return corrected SQL only.\\nOne statement per line, no semicolons, no markdown.\\n\\nFailed statements:\\n${failureSummary}\\n\\nSchema:\\n${JSON.stringify(schema)}`,\n    previous_all_results: data.all_results,\n  }\n}];"
+        "jsCode": "const data        = $input.first().json;\nconst failedStmts = data.failed_stmts;\nconst schema      = $('MCP: get_schema_overview').item.json;\n\nconst failureSummary = failedStmts\n  .map(f => `SQL: ${f.sql}\\nError: ${f.error}`)\n  .join('\\n\\n');\n\nreturn [{\n  json: {\n    retry_prompt: `The following SQL statements failed. Fix them and return corrected SQL only.\\nOne statement per line, no semicolons, no markdown.\\nDo NOT use REPLACE(), REGEXP_REPLACE() — use CASE WHEN instead.\\n\\nFailed statements:\\n${failureSummary}\\n\\nSchema:\\n${JSON.stringify(schema)}`,\n    attempt: data.attempt\n  }\n}];",
+        "mode": "runOnceForAllItems"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1712, -144],
+      "position": [1840, -120],
       "id": "c7d578e0-e3b4-4682-bc50-8a4a040202e9",
-      "name": "Build Retry Prompt"
+      "name": "Build Retry Prompt 1"
     },
     {
       "parameters": {
@@ -149,20 +152,31 @@
         "nodeCredentialType": "groqApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"openai/gpt-oss-120b\",\n  \"temperature\": 0.1,\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a DuckDB SQL expert. Return corrected SQL only. One statement per line. No semicolons. No markdown.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.retry_prompt }}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.1,\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a DuckDB SQL expert. Return corrected SQL only. One statement per line. No semicolons. No markdown. Do NOT use REPLACE() — use CASE WHEN instead.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.retry_prompt }}\"\n    }\n  ]\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [1936, -144],
+      "position": [2080, -120],
       "id": "a3265d49-33ca-4a28-8bbb-ce4fcae6efd8",
-      "name": "Groq: Retry SQL",
+      "name": "Groq: Retry SQL 1",
       "credentials": {
         "groqApi": {
           "id": "your_api_key_id",
           "name": "Groq account 1"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nconst ALLOWED = ['DELETE FROM', 'UPDATE', 'ALTER TABLE'];\nconst BLOCKED = ['DROP', 'TRUNCATE', 'CREATE', 'INSERT', 'REPLACE', 'COPY'];\n\nconst statements = raw\n  .split('\\n')\n  .map(s => s.trim())\n  .filter(s => s.length > 0)\n  .filter(s => !s.startsWith('--') && !s.startsWith('#'));\n\nconst validated = [];\nconst rejected  = [];\n\nfor (const stmt of statements) {\n  const upper = stmt.toUpperCase();\n  const isAllowed = ALLOWED.some(p => upper.startsWith(p));\n  const isBlocked = BLOCKED.some(k => upper.includes(k));\n\n  if (isAllowed && !isBlocked) {\n    validated.push(stmt);\n  } else {\n    rejected.push({ stmt, reason: isBlocked ? 'blocked keyword' : 'not in allowlist' });\n  }\n}\n\nif (validated.length === 0) {\n  throw new Error('Retry 1: No valid SQL. Rejected: ' + JSON.stringify(rejected));\n}\n\nreturn validated.map(sql => ({ json: { sql } }));",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2320, -120],
+      "id": "71f6239e-75f0-4d9a-b972-36278a1afc90",
+      "name": "Validate + Split SQL1"
     },
     {
       "parameters": {
@@ -175,27 +189,9 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [2384, -144],
+      "position": [2560, -120],
       "id": "df29e877-b801-45e0-8215-2d5f3875f5dd",
       "name": "MCP: execute_cleaning_query1"
-    },
-    {
-      "parameters": {
-        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nconst ALLOWED = ['DELETE FROM', 'UPDATE', 'ALTER TABLE'];\nconst BLOCKED = ['DROP', 'TRUNCATE', 'CREATE', 'INSERT'];\n\nconst statements = raw\n  .split('\\n')\n  .map(s => s.trim())\n  .filter(s => s.length > 0)\n  .filter(s => !s.startsWith('--') && !s.startsWith('#'));\n\nconst validated = [];\nconst rejected  = [];\n\nfor (const stmt of statements) {\n  const upper = stmt.toUpperCase();\n  const isAllowed = ALLOWED.some(p => upper.startsWith(p));\n  const isBlocked = BLOCKED.some(k => upper.includes(k));\n\n  if (isAllowed && !isBlocked) {\n    validated.push(stmt);\n  } else {\n    rejected.push(stmt);\n  }\n}\n\nif (validated.length === 0) {\n  throw new Error('No valid SQL statements generated. Rejected: ' + JSON.stringify(rejected));\n}\n\nreturn validated.map(sql => ({ json: { sql } }));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2160, -144],
-      "id": "71f6239e-75f0-4d9a-b972-36278a1afc90",
-      "name": "Validate + Split SQL1"
-    },
-    {
-      "parameters": {},
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3.2,
-      "position": [2832, -64],
-      "id": "970da13e-995d-44ed-b1d6-8ea0946e16e3",
-      "name": "Merge"
     },
     {
       "parameters": {
@@ -205,9 +201,122 @@
       },
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [2608, -144],
+      "position": [2800, -120],
       "id": "089499c9-c31c-48ff-bea4-3595be865bfb",
       "name": "Aggregate1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const aggregated = $input.first().json;\nconst results = aggregated.results || [];\n\nconst failed  = results.filter(r => r.success === false);\nconst success = results.filter(r => r.success === true);\n\nreturn [{\n  json: {\n    attempt:       2,\n    all_results:   results,\n    failed_stmts:  failed.map(r => ({ sql: r.sql, error: r.error })),\n    success_count: success.length,\n    fail_count:    failed.length,\n    has_failures:  failed.length > 0\n  }\n}];",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, -120],
+      "id": "check-attempt-2-id",
+      "name": "Check Attempt 2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "retry2-condition-id",
+              "leftValue": "={{ $json.has_failures }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3280, -120],
+      "id": "if-retry-2-id",
+      "name": "IF: Retry 2 Needed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data        = $input.first().json;\nconst failedStmts = data.failed_stmts;\nconst schema      = $('MCP: get_schema_overview').item.json;\n\nconst failureSummary = failedStmts\n  .map(f => `SQL: ${f.sql}\\nError: ${f.error}`)\n  .join('\\n\\n');\n\nreturn [{\n  json: {\n    retry_prompt: `FINAL ATTEMPT. Fix these SQL statements. Use only UPDATE ... SET col = CASE WHEN ... END. No REPLACE(). No functions except TRIM/UPPER/LOWER/CAST.\\n\\nFailed:\\n${failureSummary}\\n\\nSchema:\\n${JSON.stringify(schema)}`,\n    attempt: data.attempt\n  }\n}];",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3520, -240],
+      "id": "build-retry-2-id",
+      "name": "Build Retry Prompt 2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.1,\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"DuckDB SQL expert. Fix the SQL. One statement per line. No semicolons. No markdown. No REPLACE() function.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.retry_prompt }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [3760, -240],
+      "id": "groq-retry-2-id",
+      "name": "Groq: Retry SQL 2",
+      "credentials": {
+        "groqApi": {
+          "id": "your_api_key_id",
+          "name": "Groq account 1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content.trim();\n\nconst ALLOWED = ['DELETE FROM', 'UPDATE', 'ALTER TABLE'];\nconst BLOCKED = ['DROP', 'TRUNCATE', 'CREATE', 'INSERT', 'REPLACE', 'COPY'];\n\nconst statements = raw\n  .split('\\n')\n  .map(s => s.trim())\n  .filter(s => s.length > 0)\n  .filter(s => !s.startsWith('--') && !s.startsWith('#'));\n\nconst validated = [];\n\nfor (const stmt of statements) {\n  const upper = stmt.toUpperCase();\n  const isAllowed = ALLOWED.some(p => upper.startsWith(p));\n  const isBlocked = BLOCKED.some(k => upper.includes(k));\n  if (isAllowed && !isBlocked) validated.push(stmt);\n}\n\n// On final attempt — if still nothing valid, return a no-op so workflow completes\nif (validated.length === 0) {\n  return [{ json: { sql: null, skipped: true, reason: 'No valid SQL on final attempt' } }];\n}\n\nreturn validated.map(sql => ({ json: { sql } }));",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4000, -240],
+      "id": "validate-split-2-id",
+      "name": "Validate + Split SQL2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/tools/execute_cleaning_query",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sql\": \"{{ $json.sql }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [4240, -240],
+      "id": "execute-3-id",
+      "name": "MCP: execute_cleaning_query2"
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [4480, 0],
+      "id": "970da13e-995d-44ed-b1d6-8ea0946e16e3",
+      "name": "Merge"
     },
     {
       "parameters": {
@@ -215,12 +324,11 @@
       },
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
-      "position": [3056, -64],
+      "position": [4720, 0],
       "id": "7cacc5d1-69f4-4f19-9f72-098de26ac8e0",
       "name": "Respond to Webhook"
     }
   ],
-  "pinData": {},
   "connections": {
     "clean": {
       "main": [[{ "node": "MCP: get_schema_overview", "type": "main", "index": 0 }]]
@@ -231,28 +339,28 @@
     "Groq: Generate SQL": {
       "main": [[{ "node": "Validate + Split SQL", "type": "main", "index": 0 }]]
     },
-    "Aggregate": {
-      "main": [[{ "node": "Check Attempt 1", "type": "main", "index": 0 }]]
+    "Validate + Split SQL": {
+      "main": [[{ "node": "MCP: execute_cleaning_query", "type": "main", "index": 0 }]]
     },
     "MCP: execute_cleaning_query": {
       "main": [[{ "node": "Aggregate", "type": "main", "index": 0 }]]
     },
-    "Validate + Split SQL": {
-      "main": [[{ "node": "MCP: execute_cleaning_query", "type": "main", "index": 0 }]]
+    "Aggregate": {
+      "main": [[{ "node": "Check Attempt 1", "type": "main", "index": 0 }]]
     },
     "Check Attempt 1": {
-      "main": [[{ "node": "If", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "IF: Retry 1 Needed?", "type": "main", "index": 0 }]]
     },
-    "If": {
+    "IF: Retry 1 Needed?": {
       "main": [
-        [{ "node": "Build Retry Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Build Retry Prompt 1", "type": "main", "index": 0 }],
         [{ "node": "Merge", "type": "main", "index": 1 }]
       ]
     },
-    "Build Retry Prompt": {
-      "main": [[{ "node": "Groq: Retry SQL", "type": "main", "index": 0 }]]
+    "Build Retry Prompt 1": {
+      "main": [[{ "node": "Groq: Retry SQL 1", "type": "main", "index": 0 }]]
     },
-    "Groq: Retry SQL": {
+    "Groq: Retry SQL 1": {
       "main": [[{ "node": "Validate + Split SQL1", "type": "main", "index": 0 }]]
     },
     "Validate + Split SQL1": {
@@ -262,23 +370,33 @@
       "main": [[{ "node": "Aggregate1", "type": "main", "index": 0 }]]
     },
     "Aggregate1": {
+      "main": [[{ "node": "Check Attempt 2", "type": "main", "index": 0 }]]
+    },
+    "Check Attempt 2": {
+      "main": [[{ "node": "IF: Retry 2 Needed?", "type": "main", "index": 0 }]]
+    },
+    "IF: Retry 2 Needed?": {
+      "main": [
+        [{ "node": "Build Retry Prompt 2", "type": "main", "index": 0 }],
+        [{ "node": "Merge", "type": "main", "index": 2 }]
+      ]
+    },
+    "Build Retry Prompt 2": {
+      "main": [[{ "node": "Groq: Retry SQL 2", "type": "main", "index": 0 }]]
+    },
+    "Groq: Retry SQL 2": {
+      "main": [[{ "node": "Validate + Split SQL2", "type": "main", "index": 0 }]]
+    },
+    "Validate + Split SQL2": {
+      "main": [[{ "node": "MCP: execute_cleaning_query2", "type": "main", "index": 0 }]]
+    },
+    "MCP: execute_cleaning_query2": {
       "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
     },
     "Merge": {
       "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "binaryMode": "separate"
-  },
-  "versionId": "f12d53ee-d0b7-49db-88e7-2dbdd78c1418",
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "3f05ed52c1b7d6e5f49e1a1fb9d3453c1bb7bba7e0e6694ae0ceaba3ebdfb1cf"
-  },
-  "nodeGroups": [],
-  "id": "BAiNjcC8KmsCI0OO",
-  "tags": []
+  "settings": { "executionOrder": "v1" },
+  "active": false
 }
