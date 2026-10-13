@@ -155,7 +155,7 @@ ask_with_data/
 ├── WF3 - Initial Insights.json # n8n Workflow: Parallel EDA & chart generation
 ├── WF4 - Interactive Chat.json # n8n Workflow: Intent classifier & chat assistant
 ├── analytics.duckdb          # Local DuckDB database storage file
-└── demo.csv                  # Sample test dataset
+└── mock_data                  # Sample test dataset
 ```
 
 ---

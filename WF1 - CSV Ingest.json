@@ -3,19 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "jsCode": "// n8n Code node runs once for ALL items when in \"Run Once for All Items\" mode\n// Switch the Code node mode to \"Run Once for All Items\" first\n\nconst body = $input.first().json.body;\nconst files = body.files;\n\nif (!files || !Array.isArray(files) || files.length === 0) {\n  throw new Error(\"No files provided.\");\n}\n\nreturn files.map(f => ({\n  json: {\n    file_path: f.file_path,\n    table_name: f.table_name,\n  }\n}));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        224,
-        0
-      ],
-      "id": "a9e7a10d-268c-4707-86ec-edc0af10cc0c",
-      "name": "Split Files Array"
-    },
-    {
-      "parameters": {
         "httpMethod": "POST",
         "path": "ingest",
         "responseMode": "responseNode",
@@ -23,41 +10,20 @@
       },
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [
-        0,
-        0
-      ],
+      "position": [0, 0],
       "id": "15cf9fe3-eb21-4d68-a194-3c81014e5c28",
       "name": "Ingest_webhook",
       "webhookId": "0d8b6313-d7c4-4d06-9b71-d10cd66a6926"
     },
     {
       "parameters": {
-        "aggregate": "aggregateAllItemData",
-        "destinationFieldName": "load_results",
-        "options": {}
+        "jsCode": "const body = $input.first().json.body;\nconst files = body.files;\n\nif (!files || !Array.isArray(files) || files.length === 0) {\n  throw new Error(\"No files provided.\");\n}\n\nreturn files.map(f => ({\n  json: {\n    file_path: f.file_path,\n    table_name: f.table_name,\n  }\n}));"
       },
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [
-        672,
-        0
-      ],
-      "id": "0c1981d1-553c-4d04-a960-341b9cbc6b57",
-      "name": "Collect Load Results"
-    },
-    {
-      "parameters": {
-        "options": {}
-      },
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.5,
-      "position": [
-        1344,
-        0
-      ],
-      "id": "196f380e-3904-414c-8fbf-e46fddee88d1",
-      "name": "Respond to Webhook"
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0],
+      "id": "a9e7a10d-268c-4707-86ec-edc0af10cc0c",
+      "name": "Split Files Array"
     },
     {
       "parameters": {
@@ -70,12 +36,31 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [
-        448,
-        0
-      ],
+      "position": [448, 0],
       "id": "37daf6cd-0d81-4f07-bcb1-c20f61a3fb5c",
       "name": "MCP: load_csv_to_table"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "load_results",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [672, 0],
+      "id": "0c1981d1-553c-4d04-a960-341b9cbc6b57",
+      "name": "Collect Load Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json.load_results || [];\n\nconst failed = results.filter(r => r.success === false);\n\nif (failed.length > 0) {\n  const summary = failed\n    .map(r => `  - ${r.table_name || r.file_path}: ${r.error}`)\n    .join('\\n');\n  throw new Error(`${failed.length} file(s) failed to load:\\n${summary}`);\n}\n\nreturn [{ json: { load_results: results } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 0],
+      "id": "check-load-errors",
+      "name": "Check Load Errors"
     },
     {
       "parameters": {
@@ -88,10 +73,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [
-        896,
-        0
-      ],
+      "position": [1120, 0],
       "id": "33aa9f24-0d6e-4b65-972a-9ca0a2c23bf6",
       "name": "MCP: get_schema_overview"
     },
@@ -103,92 +85,66 @@
         "nodeCredentialType": "groqApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{\n  JSON.stringify({\n    model: \"openai/gpt-oss-120b\",\n    temperature: 0.2,\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are a data cleaning assistant. Given a database schema and sample rows, suggest 3 to 4 sensible, numbered data cleaning recommendations (e.g., removing nulls in crucial columns, casing/trimming strings, parsing dates). ALWAYS include a final numbered option: 'Custom: Specify your own cleaning rules or raw SQL command.'\"\n      },\n      {\n        role: \"user\",\n        content: \"Here is the loaded schema and samples: \" + JSON.stringify($json)\n      }\n    ]\n  })\n}}",
+        "jsonBody": "={{\n  JSON.stringify({\n    model: \"openai/gpt-oss-120b\",\n    temperature: 0.2,\n    max_tokens: 1024,\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are a data cleaning assistant. Given a database schema, suggest 3 to 4 sensible, numbered data cleaning recommendations (e.g., removing nulls in crucial columns, casing/trimming strings, parsing dates). ALWAYS include a final numbered option: 'Custom: Specify your own cleaning rules or raw SQL command.'\"\n      },\n      {\n        role: \"user\",\n        content: \"Here is the loaded schema: \" + JSON.stringify($json)\n      }\n    ]\n  })\n}}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
-      "position": [
-        1120,
-        0
-      ],
+      "position": [1344, 0],
       "id": "e9c2844b-1acb-4082-9ffa-3ce43546dfe8",
       "name": "Groq: Suggest Cleaning",
       "credentials": {
         "groqApi": {
-          "id": "your_api_key_id",
-          "name": "Groq account 1"
+          "id": "your-groq-api-credential-id",
+          "name": "Groq account 2"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const suggestions = $input.first().json.choices[0].message.content;\nconst loadResults = $('Collect Load Results').item.json.load_results;\n\nreturn [{\n  json: {\n    suggestions,\n    load_results: loadResults,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 0],
+      "id": "extract-groq-response",
+      "name": "Extract Groq Response"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1792, 0],
+      "id": "196f380e-3904-414c-8fbf-e46fddee88d1",
+      "name": "Respond to Webhook"
     }
   ],
-  "pinData": {},
   "connections": {
     "Ingest_webhook": {
-      "main": [
-        [
-          {
-            "node": "Split Files Array",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Split Files Array", "type": "main", "index": 0 }]]
     },
     "Split Files Array": {
-      "main": [
-        [
-          {
-            "node": "MCP: load_csv_to_table",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Collect Load Results": {
-      "main": [
-        [
-          {
-            "node": "MCP: get_schema_overview",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "MCP: load_csv_to_table", "type": "main", "index": 0 }]]
     },
     "MCP: load_csv_to_table": {
-      "main": [
-        [
-          {
-            "node": "Collect Load Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Collect Load Results", "type": "main", "index": 0 }]]
+    },
+    "Collect Load Results": {
+      "main": [[{ "node": "Check Load Errors", "type": "main", "index": 0 }]]
+    },
+    "Check Load Errors": {
+      "main": [[{ "node": "MCP: get_schema_overview", "type": "main", "index": 0 }]]
     },
     "MCP: get_schema_overview": {
-      "main": [
-        [
-          {
-            "node": "Groq: Suggest Cleaning",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Groq: Suggest Cleaning", "type": "main", "index": 0 }]]
     },
     "Groq: Suggest Cleaning": {
-      "main": [
-        [
-          {
-            "node": "Respond to Webhook",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Extract Groq Response", "type": "main", "index": 0 }]]
+    },
+    "Extract Groq Response": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   },
   "active": false,
@@ -201,7 +157,6 @@
     "templateCredsSetupCompleted": true,
     "instanceId": "3f05ed52c1b7d6e5f49e1a1fb9d3453c1bb7bba7e0e6694ae0ceaba3ebdfb1cf"
   },
-  "nodeGroups": [],
   "id": "TYwCoJl3CDf7BaBG",
   "tags": []
 }
